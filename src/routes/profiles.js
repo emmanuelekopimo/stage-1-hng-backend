@@ -31,7 +31,7 @@ router.post('/', async (req, res, next) => {
     // Check idempotency
     const existing = getProfileByName(trimmedName);
     if (existing) {
-      return res.status(200).json({
+      return res.status(201).json({
         status: 'success',
         message: 'Profile already exists',
         data: existing,
