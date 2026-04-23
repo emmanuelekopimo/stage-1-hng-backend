@@ -1,6 +1,7 @@
 const { v7: uuidv7 } = require('uuid');
 const db = require('../db');
-
+const { getCountryName } = require('../utils/countries');
+const { parseNLQuery } = require('./nlp');
 
 const GENDERIZE_URL = 'https://api.genderize.io';
 const AGIFY_URL = 'https://api.agify.io';
@@ -64,12 +65,11 @@ async function enrichProfile(name) {
     name,
     gender: genderData.gender,
     gender_probability: genderData.probability,
-    sample_size: genderData.count,
     age,
     age_group: classifyAgeGroup(age),
     country_id: topCountry.country_id,
+    country_name: getCountryName(topCountry.country_id),
     country_probability: topCountry.probability,
-    // UTC ISO 8601 without milliseconds, e.g. "2026-04-01T12:00:00Z"
     created_at: new Date().toISOString().split('.')[0] + 'Z',
   };
 }
@@ -77,9 +77,11 @@ async function enrichProfile(name) {
 function createProfile(profileData) {
   const stmt = db.prepare(`
     INSERT INTO profiles
-      (id, name, gender, gender_probability, sample_size, age, age_group, country_id, country_probability, created_at)
+      (id, name, gender, gender_probability, age, age_group,
+       country_id, country_name, country_probability, created_at)
     VALUES
-      (@id, @name, @gender, @gender_probability, @sample_size, @age, @age_group, @country_id, @country_probability, @created_at)
+      (@id, @name, @gender, @gender_probability, @age, @age_group,
+       @country_id, @country_name, @country_probability, @created_at)
   `);
   stmt.run(profileData);
   return profileData;
@@ -93,24 +95,80 @@ function getProfileById(id) {
   return db.prepare('SELECT * FROM profiles WHERE id = ?').get(id);
 }
 
-function getProfiles(filters = {}) {
-  let query = 'SELECT * FROM profiles WHERE 1=1';
+/**
+ * Query profiles with optional filtering, sorting, and pagination.
+ *
+ * @param {object} options
+ * @param {object} [options.filters]       - Field filter values
+ * @param {object} [options.sort]          - { sort_by, order }
+ * @param {object} [options.pagination]    - { page, limit }
+ * @returns {{ total: number, page: number, limit: number, data: object[] }}
+ */
+function getProfiles({ filters = {}, sort = {}, pagination = {} } = {}) {
+  const ALLOWED_SORT = ['age', 'created_at', 'gender_probability'];
+  const sortBy = ALLOWED_SORT.includes(sort.sort_by) ? sort.sort_by : 'created_at';
+  const order = sort.order === 'asc' ? 'ASC' : 'DESC';
+
+  const page = Math.max(1, pagination.page || 1);
+  const limit = Math.min(50, Math.max(1, pagination.limit || 10));
+  const offset = (page - 1) * limit;
+
+  let where = 'WHERE 1=1';
   const params = [];
 
   if (filters.gender) {
-    query += ' AND LOWER(gender) = LOWER(?)';
+    where += ' AND LOWER(gender) = LOWER(?)';
     params.push(filters.gender);
   }
   if (filters.country_id) {
-    query += ' AND LOWER(country_id) = LOWER(?)';
+    where += ' AND LOWER(country_id) = LOWER(?)';
     params.push(filters.country_id);
   }
   if (filters.age_group) {
-    query += ' AND LOWER(age_group) = LOWER(?)';
+    where += ' AND LOWER(age_group) = LOWER(?)';
     params.push(filters.age_group);
   }
+  if (filters.min_age !== undefined) {
+    where += ' AND age >= ?';
+    params.push(filters.min_age);
+  }
+  if (filters.max_age !== undefined) {
+    where += ' AND age <= ?';
+    params.push(filters.max_age);
+  }
+  if (filters.min_gender_probability !== undefined) {
+    where += ' AND gender_probability >= ?';
+    params.push(filters.min_gender_probability);
+  }
+  if (filters.min_country_probability !== undefined) {
+    where += ' AND country_probability >= ?';
+    params.push(filters.min_country_probability);
+  }
 
-  return db.prepare(query).all(...params);
+  const total = db
+    .prepare(`SELECT COUNT(*) AS total FROM profiles ${where}`)
+    .get(...params).total;
+
+  const data = db
+    .prepare(
+      `SELECT * FROM profiles ${where} ORDER BY ${sortBy} ${order} LIMIT ? OFFSET ?`
+    )
+    .all(...params, limit, offset);
+
+  return { total, page, limit, data };
+}
+
+/**
+ * Natural-language profile search.
+ * Parses the query string into filters via rule-based NLP, then delegates to getProfiles.
+ *
+ * @returns {{ total, page, limit, data }} or null when the query cannot be interpreted
+ */
+function searchProfiles({ q, page, limit }) {
+  const filters = parseNLQuery(q);
+  if (!filters) return null;
+
+  return getProfiles({ filters, sort: {}, pagination: { page, limit } });
 }
 
 function deleteProfile(id) {
@@ -124,5 +182,6 @@ module.exports = {
   getProfileByName,
   getProfileById,
   getProfiles,
+  searchProfiles,
   deleteProfile,
 };
