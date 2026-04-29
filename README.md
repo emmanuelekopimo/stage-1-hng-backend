@@ -86,7 +86,7 @@ Client (CLI / Browser)              Backend                   GitHub
 
 | Token | Type | TTL | Storage |
 |-------|------|-----|---------|
-| `access_token` | JWT (RS256) | 15 minutes | CLI: file; Web: HTTP-only cookie |
+| `access_token` | JWT (HS256) | 15 minutes | CLI: file; Web: HTTP-only cookie |
 | `refresh_token` | Opaque (random bytes) | 7 days | CLI: file; Web: HTTP-only cookie |
 
 - Access tokens are short-lived JWTs containing `{ sub, username, role }`.

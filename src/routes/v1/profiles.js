@@ -142,7 +142,7 @@ router.post('/', requireRole('admin'), async (req, res, next) => {
     return res.status(201).json({ status: 'success', data: profile });
   } catch (err) {
     if (err.status === 502) {
-      return res.status(502).json({ status: '502', message: err.message });
+      return res.status(502).json({ status: 'error', message: err.message });
     }
     next(err);
   }
