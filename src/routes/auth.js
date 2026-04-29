@@ -150,27 +150,11 @@ router.get("/github/callback", async (req, res, next) => {
       // Exchange auth code for tokens immediately
       const tokens = exchangeCodeForTokens(authCode, pkceVerifier, redirectUri);
 
-      // Issue HTTP-only cookies so the frontend JS doesn't have to
-      res.cookie("access_token", tokens.access_token, {
-        ...COOKIE_OPTS,
-        maxAge: tokens.expires_in * 1000,
-      });
-      res.cookie("refresh_token", tokens.refresh_token, {
-        ...COOKIE_OPTS,
-        maxAge: REFRESH_COOKIE_TTL,
-      });
-
-      const csrfToken = crypto.randomBytes(24).toString("base64url");
-      res.cookie("csrf_token", csrfToken, {
-        httpOnly: false,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        path: "/",
-        maxAge: tokens.expires_in * 1000,
-      });
-
-      // Pass a success signal to the frontend (no raw tokens in the URL)
-      target.searchParams.set("login", "success");
+      // Pass tokens as query params so the frontend (different domain) can set its own cookies
+      target.searchParams.set("access_token", tokens.access_token);
+      target.searchParams.set("refresh_token", tokens.refresh_token);
+      target.searchParams.set("token_type", tokens.token_type);
+      target.searchParams.set("expires_in", String(tokens.expires_in));
       return res.redirect(target.toString());
     }
 
